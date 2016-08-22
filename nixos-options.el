@@ -124,5 +124,40 @@ Returns VALUE unchanged if not a boolean."
 (defun nixos-options-get-option-by-name (name)
   (assoc name nixos-options))
 
+(defun nixos-options-get-option-at-point (&optional suffix)
+  "Get option at point. Returns nil if nothing can be found. See also `nixos-options-describe-option-at-point'"
+  (save-excursion
+    (let (start end option name)
+      (re-search-backward "[^[:word:]_.-]")
+      (forward-char)
+      (setq start (point))
+      (re-search-forward "[^[:word:]_.-]")
+      (backward-char)
+      (setq end (point))
+      (setq name (concat (buffer-substring start end) (if suffix (concat "." suffix))))
+      (setq option (nixos-options-get-option-by-name name))
+      (if option
+          option
+        ;; `backward-up-list' returns nil, so this gets a bit ugly
+        (if (equal "error" (condition-case nil (backward-up-list) (error "error")))
+            nil
+          (re-search-backward "=")
+          (forward-symbol -1)
+          (nixos-options-get-option-at-point name))))))
+
+(defun nixos-options-describe-option-at-point (option)
+  "Open up the documentation for option at point.
+If we're in a set search upwards to get a full option name.
+
+Eg. `networking = { hostName = \"hostname\"; };' will look up `networking.hostName'
+if point is on `hostName'.
+"
+  (interactive (list (nixos-options-get-option-at-point)))
+  (if option
+      (switch-to-buffer-other-window
+       (nixos-options-doc-buffer
+        (nixos-options-get-documentation-for-option option)))
+    (message "Couldn't describe thing at point")))
+
 (provide 'nixos-options)
 ;;; nixos-options.el ends here
