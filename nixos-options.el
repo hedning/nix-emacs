@@ -72,6 +72,11 @@
     (expand-file-name "share/doc/nixos/options.json" dir))
   "Location of the options file.")
 
+(defvar nixos-source-directory
+  (let ((cmd "echo '<nixpkgs>' | nix-instantiate --eval -"))
+    (s-trim (shell-command-to-string cmd)))
+  "The directory where options and packages are defined. Hardcoded to <nixpkgs>")
+
 (defun nixos-options--boolean-string (value)
   "Return the string representation of the boolean VALUE.
 Returns VALUE unchanged if not a boolean."
@@ -139,7 +144,7 @@ Returns VALUE unchanged if not a boolean."
       (if option
           option
         ;; `backward-up-list' returns nil, so this gets a bit ugly
-        (if (equal "error" (condition-case nil (backward-up-list) (error "error")))
+        (if (condition-case nil (backward-up-list) (error "error"))
             nil
           (re-search-backward "=")
           (forward-symbol -1)
@@ -158,6 +163,58 @@ if point is on `hostName'.
        (nixos-options-doc-buffer
         (nixos-options-get-documentation-for-option option)))
     (message "Couldn't describe thing at point")))
+
+(defun nixos-find-full-path (path)
+  (let* ((cmd (format "echo '<%s>' | nix-instantiate --eval -" path))
+         (absolute-path (shell-command-to-string cmd)))
+    (message "%s" absolute-path)))
+
+(defun nixos-options-find-option-at-point (option)
+  "Jump to the declaration of OPTION.
+
+Nix only gives the file, not the line number, so there's only a rough search to
+find the specific location, which can quickly break down on common options like
+'enable'"
+  (interactive (list (nixos-options-get-option-at-point)))
+  (let* ((name (car option))
+         (declaration (aref (nixos-options-get-declarations option) 0))
+         (path (expand-file-name declaration nixos-source-directory)))
+    (find-file path)
+    (unless (re-search-forward (concat name "\\s-=") nil t)
+      ;; If we can't find a whole match search for the last word in option
+      (re-search-forward (concat
+                          (substring name (1+ (string-match "\\.[^.]+$" name)))
+                          "\\s-=") nil t))))
+
+
+
+(defun nixos-options-send-command (proc str)
+  (setq str (concat str "\n"))
+  (with-current-buffer (process-buffer proc)
+    (inferior-haskell-wait-for-prompt proc)
+    (goto-char (process-mark proc))
+    (insert-before-markers str)
+    (move-marker comint-last-input-end (point))
+    (setq inferior-haskell-seen-prompt nil)
+    (comint-send-string proc str)))
+
+(defun nixos-options-get-result (command)
+  "Submit the expression `inf-expr' to ghci and read the result."
+  (let ((proc (get-buffer-process (get-buffer "*Nix*"))))
+    (with-current-buffer (process-buffer proc)
+      (let ((parsing-end                ; Remember previous spot.
+             (marker-position (process-mark proc))))
+        (inferior-haskell-send-command proc inf-expr)
+        ;; Find new point.
+        (inferior-haskell-wait-for-prompt proc)
+        (goto-char (point-max))
+        ;; Back up to the previous end-of-line.
+        (end-of-line 0)
+        ;; Extract the output
+        (buffer-substring-no-properties
+         (save-excursion (goto-char parsing-end)
+                         (line-beginning-position 2))
+         (point))))))
 
 (provide 'nixos-options)
 ;;; nixos-options.el ends here
